@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Tailnet Finder</title><link rel="stylesheet" href="popup.css"></head>
+<body>
+  <header><img src="icon48.png" width="36" height="36" alt=""><div><h1>Tailnet Finder</h1><p>A good name is worth a few rolls.</p></div><span class="local">LOCAL</span></header>
+  <main>
+    <section class="status" id="statusBox" aria-live="polite"><div class="statusline"><strong id="phase">Connecting…</strong><span id="stats">0 rolls · 0 checked</span></div><p id="message">Open the Tailscale name choices.</p><div id="countdown"></div></section>
+    <div class="actions"><button id="start" class="primary" disabled>Start search</button><button id="pause" disabled>Pause</button><button id="check" disabled>Check only</button></div>
+    <p class="error" id="error" role="alert" hidden></p>
+    <section id="results" hidden><div class="sectionline"><h2>Current options</h2><span>word lengths / total</span></div><ul id="candidates"></ul></section>
+    <form id="settings"><fieldset id="fields">
+      <div class="presets"><span>Quick setup</span><button type="button" data-preset="short">Both ≤4</button><button type="button" data-preset="tiny">Either ≤3</button><button type="button" data-preset="phrases">Phrase only</button></div>
+      <details open><summary>Key phrases <span>optional</span></summary>
+        <label for="phrases">Words or phrases to look for</label><textarea id="phrases" rows="2" placeholder="cat, fox, moon, blue fox"></textarea>
+        <p class="hint">Separate alternatives with commas or new lines. Case is ignored.</p>
+        <div class="grid"><label>Match type<select id="phraseMode"><option value="word">Whole word / phrase</option><option value="contains">Contains text</option><option value="exact">Exact name / word</option><option value="starts">Starts with</option><option value="ends">Ends with</option></select></label><label>Where<select id="phraseScope"><option value="name">Anywhere in name</option><option value="first">First word</option><option value="second">Second word</option></select></label></div>
+        <label>Phrase list rule<select id="phraseLogic"><option value="any">Any listed phrase can match</option><option value="all">All listed phrases must match</option></select></label>
+      </details>
+      <details open><summary>Word lengths</summary>
+        <label class="check"><input id="lengthEnabled" type="checkbox" checked> Use length filters</label>
+        <div class="lengthgrid"><span></span><span>Minimum</span><span>Maximum</span><label for="firstMin">First word</label><input id="firstMin" type="number" min="1" max="63" value="1" aria-label="First word minimum"><input id="firstMax" type="number" min="1" max="63" value="5" aria-label="First word maximum"><label for="secondMin">Second word</label><input id="secondMin" type="number" min="1" max="63" value="1" aria-label="Second word minimum"><input id="secondMax" type="number" min="1" max="63" value="5" aria-label="Second word maximum"></div>
+        <div class="grid"><label>Length rule<select id="lengthLogic"><option value="both">Both words must qualify</option><option value="either">Either word can qualify</option></select></label><label>Total maximum<input id="totalMax" type="number" min="1" max="63" placeholder="No extra limit"></label></div>
+        <p class="hint">Total includes the hyphen; excludes .ts.net. Blank maximum = no extra limit.</p>
+      </details>
+      <label class="combine">When phrases and lengths are enabled<select id="combine"><option value="both">Require BOTH filters</option><option value="either">Accept EITHER filter</option></select></label>
+      <details><summary>Timing &amp; notifications</summary>
+        <div class="grid"><label>Seconds between rolls<input id="interval" type="number" min="3" max="120" value="5"></label><label>Maximum rerolls<input id="maxRolls" type="number" min="1" max="10000" value="200"></label></div>
+        <label>Always exclude text<input id="excludes" type="text" placeholder="Words to skip, comma separated"></label>
+        <label class="check"><input id="notify" type="checkbox" checked> Desktop notification when a match is found</label><button type="button" id="testNotification" class="textbutton">Test notification</button>
+      </details>
+    </fieldset></form>
+    <footer>Keep the Tailscale tab open. Search continues when this panel closes. Escape on the page pauses it. Matching names are highlighted for you to select.</footer>
+  </main>
+  <script src="rules.js"></script><script src="popup.js"></script>
+</body></html>
