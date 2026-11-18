@@ -4,7 +4,7 @@ A small local Edge/Chrome extension that reads the selectable Tailscale tailnet 
 
 ## Install in Edge
 
-1. Extract the ZIP to a permanent folder. Keep the extracted folder after installation.
+1. Download/extract the contents of the extension folder to any location.
 2. Type `edge://extensions` into Edge's address bar.
 3. Turn on **Developer mode**, then click **Load unpacked**.
 4. Select this package's **extension** subfolder, which contains `manifest.json`.
