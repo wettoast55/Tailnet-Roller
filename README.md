@@ -2,6 +2,8 @@
 
 A small local Edge/Chrome extension that reads the selectable Tailscale tailnet names, rerolls when no name satisfies your filters, and stops with a desktop notification when one does.
 
+![Alt Text](docs/screenshots/extension.PNG "Extension")
+
 ## Install in Edge
 
 1. Download/extract the contents of the extension folder to any location.
@@ -22,7 +24,11 @@ Chrome uses `chrome://extensions` with the same steps. The extension is activate
 4. You can close the extension popup. Keep the Tailscale tab and name dialog open. Reopen the extension to see progress or click **Pause**. Escape on the Tailscale page also pauses.
 5. A match stops the search, highlights the matching name, changes the tab title, and sends a desktop notification. Select and confirm the name yourself in Tailscale.
 
+![Alt Text](docs/screenshots/found.PNG "Found Match")
+
 Click **Test notification** under Timing & notifications to check Windows notifications. Windows Do Not Disturb can suppress notification banners or sounds. The green highlights and extension badge remain available.
+
+![Alt Text](docs/screenshots/tailnet-find-1.PNG "Finding")
 
 ## Filter examples
 
@@ -35,6 +41,10 @@ Click **Test notification** under Timing & notifications to check Windows notifi
 | `fox` plus short words | Enter `fox`, set the length bounds, choose **Require BOTH filters** |
 | `fox` or any short name | Enter `fox`, set the length bounds, choose **Accept EITHER filter** |
 | Exactly 3 letters then exactly 4 | First minimum/maximum `3`/`3`; second `4`/`4`; require both words |
+
+![Alt Text](docs/screenshots/tailnet-find-2.PNG "Phrases")
+
+![Alt Text](docs/screenshots/tailnet-find-3.PNG "Length")
 
 Phrases are separated by commas or newlines. Matching ignores case; spaces and hyphens are equivalent in phrases. Whole-word matching distinguishes `fox` from `foxtrot`; Contains text does not. Exclusions are substring checks against the whole name and always take priority. Total maximum counts the hyphen and excludes `.ts.net`: `blue-fox.ts.net` has a total length of 8.
 
