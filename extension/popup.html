@@ -6,6 +6,8 @@
   <main>
     <section class="status" id="statusBox" aria-live="polite"><div class="statusline"><strong id="phase">Connecting…</strong><span id="stats">0 rolls · 0 checked</span></div><p id="message">Open the Tailscale name choices.</p><div id="countdown"></div></section>
     <div class="actions"><button id="start" class="primary" disabled>Start search</button><button id="pause" disabled>Pause</button><button id="check" disabled>Check only</button></div>
+    <div id="skipPanel" hidden><button id="skip" class="primary skipAction" type="button" disabled>Skip this match &amp; continue</button><p class="hint">Skips the matching names in this set for this tab session and starts a new reroll budget.</p></div>
+    <p class="hint" id="skippedInfo" hidden></p>
     <p class="error" id="error" role="alert" hidden></p>
     <section id="results" hidden><div class="sectionline"><h2>Current options</h2><span>word lengths / total</span></div><ul id="candidates"></ul></section>
     <form id="settings"><fieldset id="fields">

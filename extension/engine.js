@@ -7,9 +7,10 @@
       this.now = options.now || Date.now;
       this.settle = options.settle ?? 1000;
       this.timeout = options.timeout ?? 30000;
+      this.skipped = new Set();
       this.state = {phase:"idle", running:false, message:"Check the current names, then start your search.", rolls:0, checked:0, candidates:[], matches:[], history:[]};
     }
-    getState() { return {...this.state, nextIn: this.state.running && this.nextAt ? Math.max(0, Math.ceil((this.nextAt - this.now()) / 1000)) : 0}; }
+    getState() { return {...this.state, skippedCount:this.skipped.size, nextIn: this.state.running && this.nextAt ? Math.max(0, Math.ceil((this.nextAt - this.now()) / 1000)) : 0}; }
     stop(phase, message) {
       this.state.running = false;
       this.state.phase = phase;
@@ -19,8 +20,22 @@
       return this.getState();
     }
     pause(message = "Paused. Current options have been preserved.") { return this.stop("paused", message); }
+    skipAndContinue(input = this.config) {
+      if (this.state.running || !this.state.matches.length) throw new Error("Find a match before choosing Skip & continue.");
+      // Validate before recording the rejection. Only previously shown matches
+      // are skipped; a new, unseen match on the page must still stop the search.
+      this.rules.compile(input);
+      const previousCount = this.expectedCount;
+      for (const name of this.state.matches) this.skipped.add(name.toLowerCase());
+      const result = this.begin(input, true);
+      if (this.state.running) this.expectedCount = Math.max(previousCount || 0, this.expectedCount);
+      return result;
+    }
     scan(snapshot) {
-      const candidates = snapshot.names.map(name => this.rules.evaluate(name, this.config));
+      const candidates = snapshot.names.map(name => {
+        const result = this.rules.evaluate(name, this.config);
+        return this.skipped.has(name.toLowerCase()) ? {...result, match:false, skipped:true, why:"Skipped for this tab session"} : result;
+      });
       this.state.candidates = candidates;
       this.state.matches = candidates.filter(c => c.match).map(c => c.name);
       const fingerprint = [...snapshot.names].sort().join("|");
@@ -32,7 +47,7 @@
         this.state.history = this.state.history.slice(0, 8);
       }
       if (this.state.matches.length) {
-        this.stop("matched", "Match found. Rerolling has stopped. Select your name on Tailscale.");
+        this.stop("matched", "Match found. Select it on Tailscale, or choose Skip & continue to keep searching.");
         this.adapter.matched?.(this.getState(), snapshot, this.config.notify);
         return true;
       }

@@ -8,6 +8,7 @@
   let originalTitle = null;
   const send = message => { try { chrome.runtime.sendMessage(message).catch(() => {}); } catch {} };
   const clear = () => {
+    send({type:"TF_CLEAR_MATCH"});
     for (const [node, outline, offset] of outlines) { node.style.outline = outline; node.style.outlineOffset = offset; }
     outlines = [];
     if (originalTitle !== null && document.title.startsWith("✓ Tailnet match")) document.title = originalTitle;
@@ -55,6 +56,7 @@
       switch (message.type) {
         case "TF_STATUS": respond({ok:true, state:engine.getState()}); break;
         case "TF_START": respond({ok:true, state:engine.begin(message.config, true)}); break;
+        case "TF_SKIP_MATCH": respond({ok:true, state:engine.skipAndContinue(message.config)}); break;
         case "TF_PREVIEW": respond({ok:true, state:engine.begin(message.config, false)}); break;
         case "TF_PAUSE": respond({ok:true, state:engine.pause()}); break;
       }

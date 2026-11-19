@@ -6,6 +6,7 @@
   let connected = false;
   let polling = false;
   let busy = false;
+  let lastState = null;
   function config() { return Object.fromEntries(keys.map(key => [key, $(key).type === "checkbox" ? $(key).checked : $(key).value])); }
   function fill(c) { for (const key of keys) $(key).type === "checkbox" ? $(key).checked = Boolean(c[key]) : $(key).value = c[key]; }
   function error(message) { $("error").textContent = message || ""; $("error").hidden = !message; }
@@ -18,6 +19,7 @@
   }
   const phaseNames = {idle:"Ready", preview:"Checked", checking:"Checking", countdown:"Searching", waiting:"Loading options", matched:"Match found ✓", paused:"Paused", limit:"Limit reached", error:"Stopped"};
   function render(s) {
+    lastState = s;
     $("phase").textContent = phaseNames[s.phase] || s.phase;
     $("statusBox").dataset.phase = s.phase;
     $("message").textContent = s.message;
@@ -27,6 +29,12 @@
     $("start").disabled = !connected || s.running || busy;
     $("check").disabled = !connected || s.running || busy;
     $("pause").disabled = !connected || !s.running;
+    const canSkip = !s.running && s.matches.length > 0;
+    $("skipPanel").hidden = !canSkip;
+    $("skip").disabled = !connected || !canSkip || busy;
+    $("skip").textContent = s.matches.length > 1 ? "Skip these matches & continue" : "Skip this match & continue";
+    $("skippedInfo").hidden = !s.skippedCount;
+    $("skippedInfo").textContent = `${s.skippedCount || 0} skipped name(s) ignored until you refresh the Tailscale tab.`;
     $("results").hidden = !s.candidates.length;
     $("candidates").replaceChildren();
     for (const item of s.candidates) {
@@ -37,22 +45,25 @@
       lengths.textContent = `${item.lengths.join(" + ")} / ${item.total}`;
       li.title = item.why;
       if (item.match) li.className = "match";
+      if (item.skipped) li.className = "skipped";
       li.append(name, lengths);
       $("candidates").append(li);
     }
   }
   async function action(type) {
-    error(""); busy = true; $("start").disabled = true; $("check").disabled = true;
+    if (busy) return;
+    error(""); busy = true; $("start").disabled = true; $("check").disabled = true; $("skip").disabled = true;
     try {
       const c = await save();
       if (type !== "TF_PAUSE") TailnetRules.compile(c);
       const state = await request(type, {config:c});
       busy = false; render(state);
-    } catch (e) { busy = false; error(e.message); $("start").disabled = !connected; $("check").disabled = !connected; }
+    } catch (e) { busy = false; error(e.message); if (lastState) render(lastState); }
   }
   $("start").addEventListener("click", () => action("TF_START"));
   $("check").addEventListener("click", () => action("TF_PREVIEW"));
   $("pause").addEventListener("click", () => action("TF_PAUSE"));
+  $("skip").addEventListener("click", () => action("TF_SKIP_MATCH"));
   $("settings").addEventListener("submit", event => event.preventDefault());
   $("settings").addEventListener("change", () => save().catch(e => error(e.message)));
   for (const button of document.querySelectorAll("[data-preset]")) button.addEventListener("click", async () => {
@@ -83,8 +94,8 @@
     setInterval(async () => {
       if (polling || busy) return;
       polling = true;
-      try { render(await request("TF_STATUS")); }
-      catch { connected = false; error("Page connection lost. Reopen the extension on the Tailscale DNS page."); $("start").disabled = true; $("check").disabled = true; $("pause").disabled = true; }
+      try { const state = await request("TF_STATUS"); if (!busy) render(state); }
+      catch { connected = false; error("Page connection lost. Reopen the extension on the Tailscale DNS page."); $("start").disabled = true; $("check").disabled = true; $("pause").disabled = true; $("skip").disabled = true; }
       finally { polling = false; }
     }, 500);
   }

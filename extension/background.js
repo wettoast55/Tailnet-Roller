@@ -23,7 +23,9 @@ chrome.runtime.onMessage.addListener((message, sender, reply) => {
     return true;
   }
   if (!sender.tab || !TailnetRules.allowedURL(sender.url || sender.tab.url)) return;
-  if (message.type === "TF_BADGE") {
+  if (message.type === "TF_CLEAR_MATCH") {
+    chrome.notifications.clear(`tailnet-found-${sender.tab.id}`).catch(() => {});
+  } else if (message.type === "TF_BADGE") {
     badge(sender.tab.id, message.phase).catch(() => {});
   } else if (message.type === "TF_MATCH") {
     badge(sender.tab.id, "matched").catch(() => {});
