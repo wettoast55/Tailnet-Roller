@@ -42,9 +42,7 @@ Click **Test notification** under Timing & notifications to check Windows notifi
 | `fox` or any short name | Enter `fox`, set the length bounds, choose **Accept EITHER filter** |
 | Exactly 3 letters then exactly 4 | First minimum/maximum `3`/`3`; second `4`/`4`; require both words |
 
-![Alt Text](docs/screenshots/tailnet-find-2.PNG "Phrases")
-
-![Alt Text](docs/screenshots/tailnet-find-3.PNG "Length")
+![Alt Text](docs/screenshots/tailnet-find-2.PNG "Phrases") ![Alt Text](docs/screenshots/tailnet-find-3.PNG "Length")
 
 Phrases are separated by commas or newlines. Matching ignores case; spaces and hyphens are equivalent in phrases. Whole-word matching distinguishes `fox` from `foxtrot`; Contains text does not. Exclusions are substring checks against the whole name and always take priority. Total maximum counts the hyphen and excludes `.ts.net`: `blue-fox.ts.net` has a total length of 8.
 
