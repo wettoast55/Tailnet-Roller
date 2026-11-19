@@ -12,6 +12,8 @@ A small local Edge/Chrome extension that reads the selectable Tailscale tailnet 
 
 Chrome uses `chrome://extensions` with the same steps. The extension is activated when you open it on the Tailscale page; a page refresh is not required for first use.
 
+![Alt Text](docs/screenshots/extension-install.PNG "Extension Installation")
+
 ## Use it
 
 1. Enter your phrases and/or word-length requirements.
