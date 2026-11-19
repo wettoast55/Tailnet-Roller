@@ -1,130 +1,284 @@
-(function (root) {
+/**
+ * Search state machine. The adapter supplies page reads, clicks, and notifications.
+ * Time is injected so tests can exercise delayed responses without real waiting.
+ *
+ * A run checks current names, waits for the configured delay, clicks once, and
+ * waits for a different stable set. A match always stops the run before a click.
+ */
+(function registerEngine(root) {
   "use strict";
-  class Engine {
+
+  class RollerEngine {
     constructor(adapter, rules, options = {}) {
       this.adapter = adapter;
       this.rules = rules;
-      this.now = options.now || Date.now;
-      this.settle = options.settle ?? 1000;
-      this.timeout = options.timeout ?? 30000;
-      this.skipped = new Set();
-      this.state = {phase:"idle", running:false, message:"Check the current names, then start your search.", rolls:0, checked:0, candidates:[], matches:[], history:[]};
+      this.clock = options.now || Date.now;
+      this.settleDelayMs = options.settle ?? 1000;
+      this.responseTimeoutMs = options.timeout ?? 30000;
+
+      // Rejections survive opening/closing the popup and starting another run.
+      // A page refresh creates a new engine and clears the rejected names.
+      this.skippedNames = new Set();
+      this.state = this.createState("idle", false);
+      this.state.message = "Check the current names, then start rolling.";
     }
-    getState() { return {...this.state, skippedCount:this.skipped.size, nextIn: this.state.running && this.nextAt ? Math.max(0, Math.ceil((this.nextAt - this.now()) / 1000)) : 0}; }
+
+    /** Counters and results reset for each run; skippedNames belongs to the tab. */
+    createState(phase, running) {
+      return {
+        phase,
+        running,
+        message: "Checking current names.",
+        rolls: 0,
+        checked: 0,
+        candidates: [],
+        matches: [],
+        history: []
+      };
+    }
+
+    /** Return serializable data for the popup, without exposing page elements. */
+    getState() {
+      const secondsUntilRoll = this.state.running && this.nextRollAt
+        ? Math.max(0, Math.ceil((this.nextRollAt - this.clock()) / 1000))
+        : 0;
+
+      return {
+        ...this.state,
+        skippedCount: this.skippedNames.size,
+        nextIn: secondsUntilRoll
+      };
+    }
+
+    /** Cancel future clicks while keeping the current results available to inspect. */
     stop(phase, message) {
       this.state.running = false;
       this.state.phase = phase;
       this.state.message = message;
-      this.nextAt = 0;
+      this.nextRollAt = 0;
       this.adapter.stopped?.(this.getState());
       return this.getState();
     }
-    pause(message = "Paused. Current options have been preserved.") { return this.stop("paused", message); }
-    skipAndContinue(input = this.config) {
-      if (this.state.running || !this.state.matches.length) throw new Error("Find a match before choosing Skip & continue.");
-      // Validate before recording the rejection. Only previously shown matches
-      // are skipped; a new, unseen match on the page must still stop the search.
-      this.rules.compile(input);
-      const previousCount = this.expectedCount;
-      for (const name of this.state.matches) this.skipped.add(name.toLowerCase());
-      const result = this.begin(input, true);
-      if (this.state.running) this.expectedCount = Math.max(previousCount || 0, this.expectedCount);
-      return result;
+
+    /** Manual stops use a reusable paused state instead of discarding the engine. */
+    pause(message = "Paused. Current options have been preserved.") {
+      return this.stop("paused", message);
     }
+
+    /** Reject only the matches already shown, then start a fresh roll budget. */
+    skipAndContinue(input = this.config) {
+      if (this.state.running || this.state.matches.length === 0) {
+        throw new Error("Find a match before choosing to skip it.");
+      }
+
+      // Bad settings must not silently record rejections or discard a result.
+      this.rules.compile(input);
+      const previousOptionCount = this.expectedCount;
+
+      for (const name of this.state.matches) {
+        this.skippedNames.add(name.toLowerCase());
+      }
+
+      this.begin(input, true);
+
+      // A match can appear halfway through a page update. Preserve the known
+      // full list size so continuing cannot roll past an incomplete list.
+      if (this.state.running) {
+        this.expectedCount = Math.max(previousOptionCount || 0, this.expectedCount);
+      }
+
+      return this.getState();
+    }
+
+    /** Evaluate all currently readable choices. Returns true when a match stops us. */
     scan(snapshot) {
-      const candidates = snapshot.names.map(name => {
-        const result = this.rules.evaluate(name, this.config);
-        return this.skipped.has(name.toLowerCase()) ? {...result, match:false, skipped:true, why:"Skipped for this tab session"} : result;
+      this.state.candidates = snapshot.names.map(name => {
+        const decision = this.rules.evaluate(name, this.config);
+        if (this.skippedNames.has(name.toLowerCase())) {
+          return {
+            ...decision,
+            match: false,
+            skipped: true,
+            why: "Skipped for this tab session"
+          };
+        }
+        return decision;
       });
-      this.state.candidates = candidates;
-      this.state.matches = candidates.filter(c => c.match).map(c => c.name);
-      const fingerprint = [...snapshot.names].sort().join("|");
-      if (fingerprint !== this.fingerprint) {
-        this.fingerprint = fingerprint;
-        this.stableSince = this.now();
-        this.state.checked += candidates.length;
-        this.state.history.unshift({names:[...snapshot.names], at:this.now()});
+
+      this.state.matches = this.state.candidates
+        .filter(candidate => candidate.match)
+        .map(candidate => candidate.name);
+
+      // Sorting makes a reordered list count as the same set of names.
+      const signature = [...snapshot.names].sort().join("|");
+      if (signature !== this.optionSignature) {
+        this.optionSignature = signature;
+        this.stableSince = this.clock();
+        this.state.checked += this.state.candidates.length;
+        this.state.history.unshift({ names: [...snapshot.names], at: this.clock() });
         this.state.history = this.state.history.slice(0, 8);
       }
-      if (this.state.matches.length) {
-        this.stop("matched", "Match found. Select it on Tailscale, or choose Skip & continue to keep searching.");
+
+      if (this.state.matches.length > 0) {
+        this.stop(
+          "matched",
+          "Match found. Select it on Tailscale, or use the main button to skip it and keep rolling."
+        );
         this.adapter.matched?.(this.getState(), snapshot, this.config.notify);
         return true;
       }
+
       return false;
     }
-    begin(input, run) {
+
+    /** Start a run, or inspect once when shouldRoll is false. */
+    begin(input, shouldRoll) {
       this.pause();
       this.config = this.rules.compile(input);
       this.adapter.clear?.();
-      this.state = {phase:run ? "checking" : "preview", running:run, message:"Checking current names…", rolls:0, checked:0, candidates:[], matches:[], history:[]};
-      this.fingerprint = "";
-      this.pending = null;
+      this.state = this.createState(shouldRoll ? "checking" : "preview", shouldRoll);
+      this.optionSignature = "";
+      this.pendingRoll = null;
       this.unreadySince = null;
-      if (!this.adapter.allowed()) return this.stop("error", "Use this app on the Tailscale DNS page.");
-      const snap = this.adapter.snapshot();
-      if (!snap.ok) return this.stop("error", snap.error);
-      this.expectedCount = snap.names.length;
-      if (this.scan(snap)) return this.getState();
-      this.nextAt = this.now() + this.config.interval * 1000;
-      this.state.phase = run ? "countdown" : "preview";
-      this.state.message = run ? "No match yet. Checking again before every reroll." : "Current names checked. No rerolls were sent.";
-      if (!run) this.nextAt = 0;
+
+      if (!this.adapter.allowed()) {
+        return this.stop("error", "Use Tailnet Roller on the Tailscale DNS page.");
+      }
+
+      const snapshot = this.adapter.snapshot();
+      if (!snapshot.ok) {
+        return this.stop("error", snapshot.error);
+      }
+
+      this.expectedCount = snapshot.names.length;
+      if (this.scan(snapshot)) {
+        return this.getState();
+      }
+
+      this.nextRollAt = shouldRoll ? this.clock() + this.config.interval * 1000 : 0;
+      this.state.phase = shouldRoll ? "countdown" : "preview";
+      this.state.message = shouldRoll
+        ? "No match yet. Names are checked again before every roll."
+        : "Current names checked. No rolls were sent.";
       this.adapter.started?.(this.getState());
       return this.getState();
     }
-    tick() {
-      if (!this.state.running || this.ticking) return;
-      this.ticking = true;
-      try {
-        if (!this.adapter.allowed()) return this.stop("error", "Page changed. Search stopped.");
-        const now = this.now();
-        const snap = this.adapter.snapshot();
-        if (!snap.ok) {
-          if (!this.pending) return this.stop("error", snap.error);
-          if (now - this.pending.at >= this.timeout) return this.stop("error", "New options did not load. Search stopped without another click.");
-          return;
-        }
-        if (this.scan(snap)) return;
-        if (snap.disabled || snap.names.length !== this.expectedCount) {
-          if (this.unreadySince === null) this.unreadySince = now;
-          this.state.phase = "waiting";
-          this.state.message = "Waiting for the complete options list…";
-          if (now - this.unreadySince >= this.timeout) this.stop("error", "Options are incomplete or the button is unavailable. Search stopped.");
-          return;
-        }
+
+    /** Return true while the button is busy or the list has the wrong size. */
+    waitForCompleteOptions(snapshot, now) {
+      if (!snapshot.disabled && snapshot.names.length === this.expectedCount) {
         this.unreadySince = null;
-        if (this.pending) {
-          if (this.fingerprint === this.pending.before) {
-            this.state.phase = "waiting";
-            this.state.message = "Waiting for Tailscale to return new options…";
-            if (now - this.pending.at >= this.timeout) this.stop("error", "Names did not change after rerolling. Check the page for an error or rate limit.");
-            return;
-          }
-          if (now - this.stableSince < this.settle) return;
-          this.pending = null;
-        }
-        if (this.state.rolls >= this.config.maxRolls) return this.stop("limit", "Reroll limit reached. Current names have been checked and preserved.");
-        this.state.phase = "countdown";
-        this.state.message = "No match yet. Checking again before every reroll.";
-        if (now < this.nextAt || now - this.stableSince < this.settle) return;
-        // Re-read in the same task immediately before clicking. Never click a stale button.
-        const fresh = this.adapter.snapshot();
-        if (!fresh.ok) return this.stop("error", fresh.error);
-        const before = this.fingerprint;
-        if (this.scan(fresh)) return;
-        if (fresh.disabled || fresh.names.length !== this.expectedCount || before !== this.fingerprint) return;
-        this.pending = {before:this.fingerprint, at:now};
-        this.nextAt = now + this.config.interval * 1000;
-        this.state.rolls++;
+        return false;
+      }
+
+      if (this.unreadySince === null) this.unreadySince = now;
+      this.state.phase = "waiting";
+      this.state.message = "Waiting for the complete options list.";
+
+      if (now - this.unreadySince >= this.responseTimeoutMs) {
+        this.stop("error", "The options are incomplete or the button is unavailable.");
+      }
+
+      return true;
+    }
+
+    /** Require a changed, stable set before sending another click. */
+    waitForRollResponse(now) {
+      if (!this.pendingRoll) return false;
+
+      if (this.optionSignature === this.pendingRoll.before) {
         this.state.phase = "waiting";
-        this.state.message = "Rerolled once. Waiting for the new names…";
-        this.adapter.click(fresh);
+        this.state.message = "Waiting for Tailscale to return new options.";
+
+        if (now - this.pendingRoll.at >= this.responseTimeoutMs) {
+          this.stop("error", "Names did not change. Check Tailscale for an error or rate limit.");
+        }
+        return true;
+      }
+
+      if (now - this.stableSince < this.settleDelayMs) return true;
+
+      this.pendingRoll = null;
+      return false;
+    }
+
+    /** Re-read immediately before clicking so an incoming match is not discarded. */
+    rollIfReady(now) {
+      if (now < this.nextRollAt || now - this.stableSince < this.settleDelayMs) return;
+
+      const freshSnapshot = this.adapter.snapshot();
+      if (!freshSnapshot.ok) {
+        this.stop("error", freshSnapshot.error);
+        return;
+      }
+
+      const previousSignature = this.optionSignature;
+      if (this.scan(freshSnapshot)) return;
+
+      if (freshSnapshot.disabled
+          || freshSnapshot.names.length !== this.expectedCount
+          || previousSignature !== this.optionSignature) {
+        return;
+      }
+
+      // Record the pending response before clicking; page listeners can run
+      // synchronously during click(), and must not cause a second click.
+      this.pendingRoll = { before: this.optionSignature, at: now };
+      this.nextRollAt = now + this.config.interval * 1000;
+      this.state.rolls++;
+      this.state.phase = "waiting";
+      this.state.message = "Rolled once. Waiting for the new names.";
+      this.adapter.click(freshSnapshot);
+    }
+
+    /** One safe polling step. The page controller calls this after timers and edits. */
+    tick() {
+      if (!this.state.running || this.isTicking) return;
+      this.isTicking = true;
+
+      try {
+        if (!this.adapter.allowed()) {
+          this.stop("error", "Page changed. Rolling stopped.");
+          return;
+        }
+
+        const now = this.clock();
+        const snapshot = this.adapter.snapshot();
+
+        if (!snapshot.ok) {
+          if (!this.pendingRoll) {
+            this.stop("error", snapshot.error);
+          } else if (now - this.pendingRoll.at >= this.responseTimeoutMs) {
+            this.stop("error", "New options did not load. No further click was sent.");
+          }
+          return;
+        }
+
+        // Even a partly loaded set can reveal a match. Stop before waiting.
+        if (this.scan(snapshot)) return;
+        if (this.waitForCompleteOptions(snapshot, now)) return;
+        if (this.waitForRollResponse(now)) return;
+
+        // Check final results before enforcing the limit, so the last roll counts.
+        if (this.state.rolls >= this.config.maxRolls) {
+          this.stop("limit", "Roll limit reached. Current names have been checked and preserved.");
+          return;
+        }
+
+        this.state.phase = "countdown";
+        this.state.message = "No match yet. Names are checked again before every roll.";
+        this.rollIfReady(now);
       } catch (error) {
         this.stop("error", `Stopped: ${error.message}`);
-      } finally { this.ticking = false; }
+      } finally {
+        this.isTicking = false;
+      }
     }
   }
-  root.TailnetEngine = Engine;
-  if (typeof module !== "undefined") module.exports = Engine;
+
+  root.TailnetEngine = RollerEngine;
+
+  if (typeof module !== "undefined") {
+    module.exports = RollerEngine;
+  }
 })(globalThis);

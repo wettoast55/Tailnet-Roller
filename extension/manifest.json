@@ -1,14 +1,29 @@
 {
   "manifest_version": 3,
-  "name": "Tailnet Finder",
-  "version": "1.1.0",
-  "description": "Find a Tailscale name with phrase and length filters. Stop and notify on a match.",
-  "permissions": ["activeTab", "scripting", "storage", "notifications"],
+  "name": "Tailnet Roller",
+  "version": "1.2.0",
+  "description": "Roll Tailscale name options, stop on a match, and keep rolling past names you skip.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "storage",
+    "notifications"
+  ],
   "action": {
     "default_popup": "popup.html",
-    "default_title": "Tailnet Finder",
-    "default_icon": {"16": "icon16.png", "48": "icon48.png", "128": "icon128.png"}
+    "default_title": "Tailnet Roller",
+    "default_icon": {
+      "16": "icon16.png",
+      "48": "icon48.png",
+      "128": "icon128.png"
+    }
   },
-  "background": {"service_worker": "background.js"},
-  "icons": {"16": "icon16.png", "48": "icon48.png", "128": "icon128.png"}
+  "background": {
+    "service_worker": "background.js"
+  },
+  "icons": {
+    "16": "icon16.png",
+    "48": "icon48.png",
+    "128": "icon128.png"
+  }
 }

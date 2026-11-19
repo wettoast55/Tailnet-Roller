@@ -1,65 +1,153 @@
-(() => {
+/**
+ * Runs in the Tailscale tab after the user opens Tailnet Roller.
+ * Connects the pure engine to page reads, the one permitted click, and messages.
+ */
+(function startPageController() {
   "use strict";
-  if (globalThis.__tailnetFinder) return;
+
+  // Opening the popup again must reuse the running search, not add another timer.
+  if (globalThis.__tailnetRoller) return;
+
   const rules = globalThis.TailnetRules;
-  const page = globalThis.TailnetPage;
+  const pageReader = globalThis.TailnetPage;
+  const messages = globalThis.TailnetMessages;
   const runtimeId = chrome.runtime.id;
-  let outlines = [];
+  const MATCH_TITLE_PREFIX = "Match found: ";
+  let highlightedElements = [];
   let originalTitle = null;
-  const send = message => { try { chrome.runtime.sendMessage(message).catch(() => {}); } catch {} };
-  const clear = () => {
-    send({type:"TF_CLEAR_MATCH"});
-    for (const [node, outline, offset] of outlines) { node.style.outline = outline; node.style.outlineOffset = offset; }
-    outlines = [];
-    if (originalTitle !== null && document.title.startsWith("✓ Tailnet match")) document.title = originalTitle;
-    originalTitle = null;
-  };
-  const engine = new globalThis.TailnetEngine({
-    allowed: () => chrome.runtime?.id === runtimeId && rules.allowedURL(location.href),
-    snapshot: () => page.snapshot(document),
-    click: snap => {
-      if (!snap.button.isConnected || !page.isReroll(snap.button) || !page.visible(snap.button)) throw new Error("Reroll button changed.");
-      snap.button.click();
-    },
-    clear,
-    started: state => send({type:"TF_BADGE", phase:state.phase}),
-    stopped: state => send({type:"TF_BADGE", phase:state.phase}),
-    matched: (state, snap, notify) => {
-      for (const option of snap.options) if (state.matches.includes(option.name)) {
-        outlines.push([option.node, option.node.style.outline, option.node.style.outlineOffset]);
-        option.node.style.outline = "3px solid #12b886";
-        option.node.style.outlineOffset = "4px";
-      }
-      originalTitle = document.title;
-      document.title = `✓ Tailnet match: ${state.matches[0]}`;
-      send({type:"TF_MATCH", names:state.matches, notify});
+
+  /** A closed/updated extension can invalidate its message channel. */
+  function sendToBackground(message) {
+    try {
+      chrome.runtime.sendMessage(message).catch(() => {});
+    } catch {
+      // The engine also checks runtime validity before every potential click.
     }
+  }
+
+  /** Restore the page's original title and outlines before another check or run. */
+  function clearMatchDisplay() {
+    sendToBackground({ type: messages.CLEAR_MATCH });
+
+    for (const saved of highlightedElements) {
+      saved.element.style.outline = saved.outline;
+      saved.element.style.outlineOffset = saved.offset;
+    }
+    highlightedElements = [];
+
+    if (originalTitle !== null && document.title.startsWith(MATCH_TITLE_PREFIX)) {
+      document.title = originalTitle;
+    }
+    originalTitle = null;
+  }
+
+  /** Highlight results without checking their radio buttons or confirming a name. */
+  function showMatch(state, snapshot, notify) {
+    for (const option of snapshot.options) {
+      if (!state.matches.includes(option.name)) continue;
+
+      highlightedElements.push({
+        element: option.node,
+        outline: option.node.style.outline,
+        offset: option.node.style.outlineOffset
+      });
+      option.node.style.outline = "3px solid #12b886";
+      option.node.style.outlineOffset = "4px";
+    }
+
+    originalTitle = document.title;
+    document.title = `${MATCH_TITLE_PREFIX}${state.matches[0]}`;
+    sendToBackground({ type: messages.MATCH_FOUND, names: state.matches, notify });
+  }
+
+  /** Forward state changes to the worker that owns toolbar permissions. */
+  function updateBadge(state) {
+    sendToBackground({ type: messages.SET_BADGE, phase: state.phase });
+  }
+
+  const engine = new globalThis.TailnetEngine({
+    allowed() {
+      return chrome.runtime?.id === runtimeId && rules.allowedURL(location.href);
+    },
+    snapshot() {
+      return pageReader.snapshot(document);
+    },
+    click(snapshot) {
+      const button = snapshot.button;
+      if (!button.isConnected || !pageReader.isReroll(button) || !pageReader.visible(button)) {
+        throw new Error("The Re-roll options button changed.");
+      }
+      button.click();
+    },
+    clear: clearMatchDisplay,
+    started: updateBadge,
+    stopped: updateBadge,
+    matched: showMatch
   }, rules);
-  globalThis.__tailnetFinder = engine;
-  const interval = setInterval(() => engine.tick(), 250);
-  // Observe name replacements immediately, including the final allowed reroll.
+
+  globalThis.__tailnetRoller = engine;
+
+  // Polling covers timing; the observer catches name replacements immediately.
+  const pollTimer = setInterval(() => engine.tick(), 250);
   const observer = new MutationObserver(() => engine.tick());
-  observer.observe(document.documentElement, {childList:true, subtree:true, characterData:true, attributes:true, attributeFilter:["disabled","aria-disabled","aria-busy"]});
-  // User interaction with the underlying name dialog always cancels automation.
+  observer.observe(document.documentElement, {
+    childList: true,
+    subtree: true,
+    characterData: true,
+    attributes: true,
+    attributeFilter: ["disabled", "aria-disabled", "aria-busy"]
+  });
+
+  // Real interaction with the dialog pauses automation. Our synthetic button
+  // clicks have isTrusted=false and therefore do not pause their own run.
   document.addEventListener("click", event => {
     if (!event.isTrusted || !engine.state.running) return;
-    const snap = page.snapshot(document);
-    if (snap.ok && snap.scope.contains(event.target)) engine.pause("Paused because you interacted with the Tailscale dialog.");
+    const snapshot = pageReader.snapshot(document);
+    if (snapshot.ok && snapshot.scope.contains(event.target)) {
+      engine.pause("Paused because you interacted with the Tailscale dialog.");
+    }
   }, true);
+
   document.addEventListener("keydown", event => {
-    if (event.key === "Escape" && engine.state.running) engine.pause("Paused with Escape.");
+    if (event.key === "Escape" && engine.state.running) {
+      engine.pause("Paused with Escape.");
+    }
   }, true);
-  window.addEventListener("pagehide", () => {engine.pause("Page closed or changed."); clearInterval(interval); observer.disconnect();});
+
+  window.addEventListener("pagehide", () => {
+    engine.pause("Page closed or changed.");
+    clearInterval(pollTimer);
+    observer.disconnect();
+  });
+
+  // Only messages from this extension can control the search.
   chrome.runtime.onMessage.addListener((message, sender, respond) => {
-    if (sender.id !== chrome.runtime.id || !message?.type?.startsWith("TF_")) return;
+    if (sender.id !== runtimeId) return;
+
     try {
+      let state;
       switch (message.type) {
-        case "TF_STATUS": respond({ok:true, state:engine.getState()}); break;
-        case "TF_START": respond({ok:true, state:engine.begin(message.config, true)}); break;
-        case "TF_SKIP_MATCH": respond({ok:true, state:engine.skipAndContinue(message.config)}); break;
-        case "TF_PREVIEW": respond({ok:true, state:engine.begin(message.config, false)}); break;
-        case "TF_PAUSE": respond({ok:true, state:engine.pause()}); break;
+        case messages.STATUS:
+          state = engine.getState();
+          break;
+        case messages.START:
+          state = engine.begin(message.config, true);
+          break;
+        case messages.SKIP_MATCH:
+          state = engine.skipAndContinue(message.config);
+          break;
+        case messages.PREVIEW:
+          state = engine.begin(message.config, false);
+          break;
+        case messages.PAUSE:
+          state = engine.pause();
+          break;
+        default:
+          return;
       }
-    } catch (error) { respond({ok:false, error:error.message}); }
+      respond({ ok: true, state });
+    } catch (error) {
+      respond({ ok: false, error: error.message });
+    }
   });
 })();
